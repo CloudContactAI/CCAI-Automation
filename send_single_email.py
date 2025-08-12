@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Send a single email via CCAI API.
-Usage: python3 send_single_email.py "recipient@email.com" "Subject" "Message"
+Send AI-personalized single email via CCAI API with LinkedIn scraping.
+Usage: python3 send_single_email.py "recipient@email.com" "linkedin_url"
 """
 
 import asyncio
@@ -11,6 +11,8 @@ import aiohttp
 from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
+from ai_email_generator import AIEmailGenerator
+from linkedin_mcp_server.error_handler import safe_get_driver
 
 load_dotenv()
 
@@ -78,43 +80,89 @@ class CCAPIClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-async def send_email(to_email: str, subject: str, message: str, schedule_minutes: int = 2):
-    """Send a single email."""
+async def send_ai_email(to_email: str, linkedin_url: str, schedule_minutes: int = 2):
+    """Send AI-personalized email based on LinkedIn profile."""
     
-    print(f"📧 Sending email to: {to_email}")
-    print(f"📝 Subject: {subject}")
+    print(f"📧 Sending AI-personalized email to: {to_email}")
+    print(f"🔗 LinkedIn: {linkedin_url}")
     print(f"⏰ Scheduled for: {schedule_minutes} minutes from now")
-    print("-" * 50)
+    print("-" * 60)
     
-    ccai_client = CCAPIClient()
+    # Initialize AI generator and driver
+    ai_generator = AIEmailGenerator()
+    driver = safe_get_driver()
     
-    result = await ccai_client.send_single_email(to_email, subject, message, schedule_minutes)
-    
-    if result["success"]:
-        print(f"✅ Email sent successfully!")
-        print(f"📅 Scheduled for: {result.get('scheduled_time', 'Unknown time')}")
-    else:
-        print(f"❌ Email failed: {result}")
+    try:
+        # Scrape LinkedIn profile with recent posts
+        print("🔍 Scraping LinkedIn profile and recent posts...")
+        person_data = ai_generator.scrape_linkedin_with_posts(linkedin_url, driver)
+        
+        if not person_data:
+            print("❌ Failed to scrape LinkedIn profile")
+            return
+        
+        # Format profile for AI
+        print("🧠 Formatting profile data for AI...")
+        profile_info = ai_generator.format_profile_for_ai(person_data)
+        
+        # Generate AI email
+        print("🤖 Generating AI-personalized email...")
+        first_name = person_data.get('name', '').split()[0] if person_data.get('name') else to_email.split('@')[0]
+        ai_email = await ai_generator.generate_ai_email(profile_info, first_name)
+        
+        # Parse subject and message
+        lines = ai_email.split('\n')
+        subject = lines[0].replace("Subject: ", "")
+        
+        body_start = 1
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+        
+        message = '\n'.join(lines[body_start:])
+        
+        print(f"📝 Subject: {subject}")
+        print("📧 Sending AI-personalized email...")
+        
+        # Send email
+        ccai_client = CCAPIClient()
+        result = await ccai_client.send_single_email(to_email, subject, message, schedule_minutes)
+        
+        if result["success"]:
+            print(f"✅ AI-personalized email sent successfully!")
+            print(f"📅 Scheduled for: {result.get('scheduled_time', 'Unknown time')}")
+        else:
+            print(f"❌ Email failed: {result}")
+            
+    except Exception as e:
+        print(f"❌ Error: {e}")
+    finally:
+        if driver:
+            driver.quit()
 
 def show_usage():
-    print("📧 Single Email Sender")
-    print("=" * 30)
+    print("🤖 AI-Powered Single Email Sender")
+    print("=" * 40)
     print("Usage:")
-    print('  python3 send_single_email.py "email@domain.com" "Subject" "Message"')
-    print('  python3 send_single_email.py "email@domain.com" "Subject" "Message" 5  # Schedule 5 minutes from now')
+    print('  python3 send_single_email.py "email@domain.com" "linkedin_url"')
+    print('  python3 send_single_email.py "email@domain.com" "linkedin_url" 5  # Schedule 5 minutes from now')
     print()
     print("Examples:")
-    print('  python3 send_single_email.py "john@company.com" "Quick question" "Hi John, hope you\'re well..."')
-    print('  python3 send_single_email.py "jane@startup.com" "AWS Discussion" "<p>Hi Jane,</p><p>Interested in AWS optimization?</p>"')
+    print('  python3 send_single_email.py "john@company.com" "https://linkedin.com/in/john-doe"')
+    print('  python3 send_single_email.py "jane@startup.com" "https://linkedin.com/in/jane-smith" 10')
+    print()
+    print("Features:")
+    print('  • Scrapes LinkedIn profile and recent posts')
+    print('  • Uses AWS Bedrock AI for personalization')
+    print('  • References recent LinkedIn activity in email')
+    print('  • Professional AllCode signature included')
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
+    if len(sys.argv) < 3:
         show_usage()
         sys.exit(1)
     
     to_email = sys.argv[1]
-    subject = sys.argv[2]
-    message = sys.argv[3]
-    schedule_minutes = int(sys.argv[4]) if len(sys.argv) > 4 else 2
+    linkedin_url = sys.argv[2]
+    schedule_minutes = int(sys.argv[3]) if len(sys.argv) > 3 else 2
     
-    asyncio.run(send_email(to_email, subject, message, schedule_minutes))
+    asyncio.run(send_ai_email(to_email, linkedin_url, schedule_minutes))

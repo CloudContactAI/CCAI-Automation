@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Send AI-customized test emails via CCAI.
+Send AI-customized test emails with LinkedIn scraping via CCAI.
 """
 
 import asyncio
@@ -10,6 +10,8 @@ import aiohttp
 from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
+from ai_email_generator import AIEmailGenerator
+from linkedin_mcp_server.error_handler import safe_get_driver
 
 load_dotenv()
 
@@ -74,22 +76,54 @@ class CCAPIClient:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-def generate_ai_email(name, company, title, recipient_email):
-    """Generate AI-customized email based on profile data."""
+async def generate_ai_email_with_linkedin(contact, ai_generator, driver):
+    """Generate AI-customized email with LinkedIn scraping and recent posts."""
     
-    first_name = name.split()[0] if name else "Friend"
-    
-    if 'CEO' in title or 'Founder' in title:
-        subject = f"Quick question about {company}'s growth strategy"
+    try:
+        # Scrape LinkedIn profile with recent posts
+        print(f"🔍 Scraping LinkedIn profile: {contact['linkedin_url']}")
+        person_data = ai_generator.scrape_linkedin_with_posts(contact['linkedin_url'], driver)
+        
+        if not person_data:
+            print("⚠️ LinkedIn scraping failed, using fallback data")
+            person_data = {
+                'name': contact['name'],
+                'company': contact['company'],
+                'job_title': contact['title'],
+                'about': '',
+                'recent_posts': [],
+                'experiences': []
+            }
+        
+        # Format profile for AI
+        profile_info = ai_generator.format_profile_for_ai(person_data)
+        
+        # Generate AI email
+        first_name = contact['name'].split()[0] if contact['name'] else "Friend"
+        ai_email = await ai_generator.generate_ai_email(profile_info, first_name)
+        
+        # Parse subject and content
+        lines = ai_email.split('\n')
+        subject = lines[0].replace("Subject: ", "")
+        
+        body_start = 1
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+        
+        content = '\n'.join(lines[body_start:])
+        
+        return subject, content
+        
+    except Exception as e:
+        print(f"❌ AI generation failed: {e}")
+        # Fallback to simple template
+        first_name = contact['name'].split()[0] if contact['name'] else "Friend"
+        subject = f"Quick question about {contact['company']}"
         content = f"""<p>Hi {first_name},</p>
 
-<p>I came across your profile and was impressed by your leadership at {company}.</p>
+<p>I came across your profile and wanted to reach out about your work at {contact['company']}.</p>
 
-<p>As {title}, you probably understand the challenges of scaling technology infrastructure while maintaining operational efficiency.</p>
-
-<p>We've helped companies like {company} streamline their cloud architecture and reduce operational costs by up to 40%.</p>
-
-<p>Would you be open to a brief 15-minute call to discuss how we might help {company} with your technology initiatives?</p>
+<p>At AllCode, we help companies optimize their cloud infrastructure. Would you have 15 minutes to discuss potential opportunities?</p>
 
 <p>Thanks,</p>
 
@@ -100,32 +134,11 @@ LinkedIn Profile: <a href="https://www.linkedin.com/in/andreas-garcia-0a7963139"
 (415) 890-6431<br>
 101 Montgomery Street<br>
 San Francisco, CA 94104</p>"""
-    else:
-        subject = f"Your work at {company}"
-        content = f"""<p>Hi {first_name},</p>
-
-<p>I noticed your experience as {title} at {company} and wanted to reach out.</p>
-
-<p>Given your background in technology, you'd probably appreciate our approach to cloud-native architecture and DevOps automation.</p>
-
-<p>We specialize in helping companies like {company} build more scalable, reliable infrastructure.</p>
-
-<p>Would you have 15 minutes to discuss some of the technical challenges you're facing?</p>
-
-<p>Thanks,</p>
-
-<p>Andreas Garcia<br>
-Account Executive<br>
-AllCode: <a href="https://allcode.com/">https://allcode.com/</a><br>
-LinkedIn Profile: <a href="https://www.linkedin.com/in/andreas-garcia-0a7963139">www.linkedin.com/in/andreas-garcia-0a7963139</a><br>
-(415) 890-6431<br>
-101 Montgomery Street<br>
-San Francisco, CA 94104</p>"""
-    
-    return subject, content
+        
+        return subject, content
 
 async def send_test_emails():
-    """Send test AI-customized emails."""
+    """Send test AI-customized emails with LinkedIn scraping."""
     
     # Test data based on LinkedIn profiles
     test_contacts = [
@@ -145,57 +158,61 @@ async def send_test_emails():
         }
     ]
     
-    print("🧪 Sending AI-customized test emails...")
+    print("🤖 Sending AI-customized test emails with LinkedIn scraping...")
     print(f"📅 Emails scheduled for 2 minutes from now")
-    print("=" * 50)
+    print("=" * 60)
     
+    # Initialize AI generator and driver
+    ai_generator = AIEmailGenerator()
+    driver = safe_get_driver()
     ccai_client = CCAPIClient()
     
-    for i, contact in enumerate(test_contacts, 1):
-        print(f"\n📤 Processing {contact['name']} ({contact['email']})")
-        print(f"🏢 Company: {contact['company']} | Title: {contact['title']}")
-        
-        try:
-            # Generate AI-customized email
-            print("🤖 Generating AI-customized email...")
-            subject, content = generate_ai_email(
-                contact['name'], 
-                contact['company'], 
-                contact['title'], 
-                contact['email']
-            )
+    try:
+        for i, contact in enumerate(test_contacts, 1):
+            print(f"\n📤 Processing {contact['name']} ({contact['email']})")
+            print(f"🏢 Company: {contact['company']} | Title: {contact['title']}")
+            print(f"🔗 LinkedIn: {contact['linkedin_url']}")
             
-            # Parse name
-            name_parts = contact["name"].split()
-            first_name = name_parts[0]
-            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
-            
-            # Send email
-            print("📧 Sending personalized email...")
-            result = await ccai_client.send_test_email(
-                first_name=first_name,
-                last_name=last_name,
-                to_email=contact["email"],
-                subject=subject,
-                message=content
-            )
-            
-            if result["success"]:
-                print(f"✅ AI-customized email scheduled successfully")
-                print(f"📧 Subject: {subject}")
-            else:
-                print(f"❌ Email failed: {result}")
+            try:
+                # Generate AI-customized email with LinkedIn data
+                print("🤖 Generating AI email with LinkedIn scraping...")
+                subject, content = await generate_ai_email_with_linkedin(contact, ai_generator, driver)
                 
-        except Exception as e:
-            print(f"❌ Error: {e}")
+                # Parse name
+                name_parts = contact["name"].split()
+                first_name = name_parts[0]
+                last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+                
+                # Send email
+                print("📧 Sending AI-personalized email...")
+                result = await ccai_client.send_test_email(
+                    first_name=first_name,
+                    last_name=last_name,
+                    to_email=contact["email"],
+                    subject=subject,
+                    message=content
+                )
+                
+                if result["success"]:
+                    print(f"✅ AI-customized email scheduled successfully")
+                    print(f"📧 Subject: {subject}")
+                else:
+                    print(f"❌ Email failed: {result}")
+                    
+            except Exception as e:
+                print(f"❌ Error: {e}")
+            
+            # Delay between emails
+            await asyncio.sleep(3)
         
-        # Delay between emails
-        await asyncio.sleep(3)
-    
-    print(f"\n🎉 Test email campaign completed!")
-    print(f"📧 Check your inboxes in about 2 minutes")
+        print(f"\n🎉 AI test email campaign completed!")
+        print(f"📧 Check your inboxes in about 2 minutes")
+        
+    finally:
+        if driver:
+            driver.quit()
 
 if __name__ == "__main__":
-    print("🧪 AI Email Test System - SEND MODE")
-    print("=" * 40)
+    print("🤖 AI Email Test System with LinkedIn Scraping - SEND MODE")
+    print("=" * 60)
     asyncio.run(send_test_emails())

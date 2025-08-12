@@ -21,14 +21,74 @@ class AIEmailGenerator:
     
     def __init__(self):
         if HAS_BEDROCK:
-            self.bedrock = boto3.client(
-                'bedrock-runtime',
-                region_name=os.getenv('AWS_REGION', 'us-east-1')
-            )
+            # Support AWS profiles (including SSO profiles)
+            aws_profile = os.getenv('AWS_PROFILE')
+            aws_region = os.getenv('AWS_REGION', 'us-east-1')
+            
+            if aws_profile:
+                try:
+                    # Use specific profile (works with SSO profiles)
+                    session = boto3.Session(profile_name=aws_profile)
+                    self.bedrock = session.client('bedrock-runtime', region_name=aws_region)
+                    print(f"🔐 Using AWS profile: {aws_profile}")
+                except Exception as e:
+                    print(f"⚠️ AWS profile '{aws_profile}' not found or invalid: {e}")
+                    print("🔄 Falling back to environment variables or default credentials...")
+                    # Fall back to environment variables by temporarily unsetting AWS_PROFILE
+                    try:
+                        # Create session with explicit credentials from environment
+                        aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+                        aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+                        
+                        if aws_access_key and aws_secret_key:
+                            # Temporarily unset AWS_PROFILE to avoid boto3 confusion
+                            original_profile = os.environ.pop('AWS_PROFILE', None)
+                            try:
+                                session = boto3.Session(
+                                    aws_access_key_id=aws_access_key,
+                                    aws_secret_access_key=aws_secret_key,
+                                    region_name=aws_region
+                                )
+                                self.bedrock = session.client('bedrock-runtime')
+                                print(f"🔐 Using AWS credentials from environment variables in region: {aws_region}")
+                            finally:
+                                # Restore AWS_PROFILE if it was set
+                                if original_profile:
+                                    os.environ['AWS_PROFILE'] = original_profile
+                        else:
+                            # Temporarily unset AWS_PROFILE and use default credentials
+                            original_profile = os.environ.pop('AWS_PROFILE', None)
+                            try:
+                                self.bedrock = boto3.client('bedrock-runtime', region_name=aws_region)
+                                print(f"🔐 Using default AWS credentials in region: {aws_region}")
+                            finally:
+                                # Restore AWS_PROFILE if it was set
+                                if original_profile:
+                                    os.environ['AWS_PROFILE'] = original_profile
+                    except Exception as fallback_error:
+                        print(f"❌ Fallback also failed: {fallback_error}")
+                        raise
+            else:
+                # No profile specified, use environment variables or default credentials
+                aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+                aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+                
+                if aws_access_key and aws_secret_key:
+                    session = boto3.Session(
+                        aws_access_key_id=aws_access_key,
+                        aws_secret_access_key=aws_secret_key,
+                        region_name=aws_region
+                    )
+                    self.bedrock = session.client('bedrock-runtime')
+                    print(f"🔐 Using AWS credentials from environment variables in region: {aws_region}")
+                else:
+                    # Use default credentials (IAM role, default profile, etc.)
+                    self.bedrock = boto3.client('bedrock-runtime', region_name=aws_region)
+                    print(f"🔐 Using default AWS credentials in region: {aws_region}")
         
         self.goals = [
             "book a 15-minute discovery call to discuss AWS optimization opportunities",
-            "introduce AllCode's cloud infrastructure services",
+            f"introduce {os.getenv('SENDER_COMPANY', 'AllCode')}'s cloud infrastructure services",
             "offer a collaboration on cloud security solutions",
             "schedule a brief consultation about scaling their infrastructure"
         ]
@@ -36,62 +96,130 @@ class AIEmailGenerator:
         self.tones = ["professional", "consultative", "friendly"]
     
     def scrape_linkedin_with_posts(self, linkedin_url, driver):
-        """Scrape LinkedIn profile including recent posts from last 30 days."""
+        """Scrape LinkedIn profile with fallback when scraping fails."""
         try:
-            from linkedin_scraper import Person
             import time
+            from selenium.webdriver.common.by import By
             
-            # Get basic profile
-            person = Person(linkedin_url, driver=driver, close_on_complete=False)
+            print(f"🔍 Scraping LinkedIn profile: {linkedin_url}")
             
-            # Get recent activity (posts from last 30 days)
-            recent_posts = []
-            try:
-                driver.get(linkedin_url + "recent-activity/all/")
-                time.sleep(3)
+            # Navigate to profile
+            driver.get(linkedin_url)
+            time.sleep(5)
+            
+            # Check if page loaded properly
+            page_title = driver.title.lower()
+            current_url = driver.current_url.lower()
+            
+            if ("this page isn't working" in page_title or 
+                "login" in current_url or 
+                "authwall" in current_url or
+                "challenge" in current_url):
                 
-                # Look for posts in the last 30 days
-                activities = driver.find_elements("css selector", "[data-id*='urn:li:activity']")[:5]
-                
-                for activity in activities:
-                    try:
-                        # Get post text
-                        text_elem = activity.find_element("css selector", ".feed-shared-text")
-                        post_text = text_elem.text if text_elem else ""
-                        
-                        # Get post date (approximate)
-                        date_elem = activity.find_element("css selector", "time")
-                        post_date = date_elem.get_attribute("datetime") if date_elem else ""
-                        
-                        if post_text and len(post_text) > 20:  # Filter out very short posts
-                            recent_posts.append({
-                                "text": post_text[:300],  # Limit length
-                                "date": post_date
-                            })
-                    except:
-                        continue
-                        
-            except Exception as e:
-                print(f"⚠️ Could not scrape recent posts: {e}")
+                print("⚠️ LinkedIn access blocked or session expired")
+                return self._create_fallback_profile(linkedin_url)
             
-            return {
-                'name': person.name,
-                'company': person.company,
-                'job_title': person.job_title,
-                'about': person.about[:400] if person.about else "",
-                'recent_posts': recent_posts[:2],  # Keep top 2 recent posts
-                'experiences': [
-                    {
-                        'position_title': exp.position_title,
-                        'institution_name': exp.institution_name,
-                        'duration': exp.duration
-                    } for exp in person.experiences[:2]
-                ] if person.experiences else []
+            # Try to extract basic information
+            name = self._extract_element_text(driver, [
+                "h1.text-heading-xlarge", "h1.break-words", "h1", 
+                "[data-generated-suggestion-target]", ".pv-text-details__left-panel h1"
+            ], "Name not found")
+            
+            headline = self._extract_element_text(driver, [
+                ".text-body-medium.break-words", ".text-body-medium",
+                ".pv-text-details__left-panel .text-body-medium"
+            ], "Headline not found", filter_func=lambda x: len(x) > 5 and "connections" not in x.lower())
+            
+            location = self._extract_element_text(driver, [
+                ".text-body-small.inline.t-black--light.break-words",
+                ".text-body-small", ".pv-text-details__left-panel .text-body-small"
+            ], "Location not found", filter_func=lambda x: ',' in x)
+            
+            # If we couldn't extract basic info, use fallback
+            if name == "Name not found" and headline == "Headline not found":
+                print("⚠️ Could not extract profile information, using fallback")
+                return self._create_fallback_profile(linkedin_url)
+            
+            result = {
+                'name': name,
+                'company': self._extract_company_from_headline(headline),
+                'job_title': headline,
+                'about': "",
+                'recent_posts': [],  # Skip posts for now due to reliability issues
+                'location': location,
+                'experiences': []
             }
+            
+            print(f"✅ Successfully scraped profile for {name}")
+            return result
             
         except Exception as e:
             print(f"❌ LinkedIn scraping failed: {e}")
-            return None
+            return self._create_fallback_profile(linkedin_url)
+    
+    def _create_fallback_profile(self, linkedin_url):
+        """Create a fallback profile when scraping fails"""
+        # Extract name from URL if possible
+        url_parts = linkedin_url.rstrip('/').split('/')
+        profile_slug = url_parts[-1] if url_parts else "unknown"
+        
+        # Try to make a reasonable name from the profile slug
+        if profile_slug and profile_slug != "unknown":
+            # Convert joelgarcia -> Joel Garcia
+            name_parts = []
+            current_part = ""
+            for char in profile_slug:
+                if char.isupper() and current_part:
+                    name_parts.append(current_part.capitalize())
+                    current_part = char
+                elif char.isalpha():
+                    current_part += char
+                elif char in ['-', '_'] and current_part:
+                    name_parts.append(current_part.capitalize())
+                    current_part = ""
+            
+            if current_part:
+                name_parts.append(current_part.capitalize())
+            
+            fallback_name = " ".join(name_parts) if name_parts else "LinkedIn User"
+        else:
+            fallback_name = "LinkedIn User"
+        
+        print(f"🔄 Using fallback profile for {fallback_name}")
+        
+        return {
+            'name': fallback_name,
+            'company': "Company not available",
+            'job_title': "Professional",
+            'about': "LinkedIn profile information not available due to access restrictions.",
+            'recent_posts': [],
+            'location': "Location not available",
+            'experiences': []
+        }
+    
+    def _extract_element_text(self, driver, selectors, default="Not found", filter_func=None):
+        """Extract text from element using multiple selectors with optional filtering"""
+        for selector in selectors:
+            try:
+                elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                for element in elements:
+                    try:
+                        text = element.text.strip()
+                        if text and (not filter_func or filter_func(text)):
+                            return text
+                    except:
+                        continue
+            except:
+                continue
+        return default
+    
+    def _extract_company_from_headline(self, headline):
+        """Extract company name from headline"""
+        if " at " in headline:
+            return headline.split(" at ")[-1].strip()
+        elif " @ " in headline:
+            return headline.split(" @ ")[-1].strip()
+        return "Company not found"
     
     def format_profile_for_ai(self, person_data, csv_data=None):
         """Format LinkedIn profile info for AI prompt including recent posts."""
@@ -145,6 +273,13 @@ class AIEmailGenerator:
         goal = goal or random.choice(self.goals)
         tone = tone or random.choice(self.tones)
         
+        sender_name = os.getenv('SENDER_NAME', 'Andreas Garcia')
+        sender_title = os.getenv('SENDER_TITLE', 'Account Executive')
+        sender_linkedin = os.getenv('SENDER_LINKEDIN', 'https://www.linkedin.com/in/andreas-garcia-0a7963139')
+        sender_phone = os.getenv('SENDER_PHONE', '(415) 890-6431')
+        sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
+        sender_company_url = os.getenv('SENDER_COMPANY_URL', 'https://allcode.com')
+        
         prompt = f"""Write a personalized cold outreach email to {first_name} based on their LinkedIn profile:
 
 {profile_info}
@@ -164,11 +299,11 @@ Subject: [compelling subject line - no HTML tags]
 
 Thanks,
 
-Andreas Garcia
-Account Executive
-AllCode: https://allcode.com/
-LinkedIn Profile: www.linkedin.com/in/andreas-garcia-0a7963139
-(415) 890-6431
+{sender_name}
+{sender_title}
+{sender_company}: {sender_company_url}
+LinkedIn Profile: {sender_linkedin}
+{sender_phone}
 101 Montgomery Street
 San Francisco, CA 94104"""
 
@@ -225,6 +360,13 @@ San Francisco, CA 94104"""
         if recent_post:
             post_reference = f"<p>I saw your recent LinkedIn post about {recent_post[:50]}... and it really resonated with me.</p>"
         
+        sender_name = os.getenv('SENDER_NAME', 'Andreas Garcia')
+        sender_title = os.getenv('SENDER_TITLE', 'Account Executive')
+        sender_linkedin = os.getenv('SENDER_LINKEDIN', 'https://www.linkedin.com/in/andreas-garcia-0a7963139')
+        sender_phone = os.getenv('SENDER_PHONE', '(415) 890-6431')
+        sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
+        sender_company_url = os.getenv('SENDER_COMPANY_URL', 'https://allcode.com')
+        
         email = f"""Subject: {subject}
 
 <p>Hi {first_name},</p>
@@ -233,17 +375,17 @@ San Francisco, CA 94104"""
 
 <p>Your role as {role} at {company} caught my attention, especially given your insights on LinkedIn.</p>
 
-<p>At AllCode, we help companies optimize their AWS infrastructure and would love to discuss how we might support {company}'s growth.</p>
+<p>At {sender_company}, we help companies optimize their AWS infrastructure and would love to discuss how we might support {company}'s growth.</p>
 
 <p>Would you have 15 minutes for a quick call?</p>
 
 <p>Thanks,</p>
 
-<p>Andreas Garcia<br>
-Account Executive<br>
-AllCode: <a href="https://allcode.com/">https://allcode.com/</a><br>
-LinkedIn Profile: <a href="https://www.linkedin.com/in/andreas-garcia-0a7963139">www.linkedin.com/in/andreas-garcia-0a7963139</a><br>
-(415) 890-6431<br>
+<p>{sender_name}<br>
+{sender_title}<br>
+{sender_company}: <a href="{sender_company_url}">{sender_company_url}</a><br>
+LinkedIn Profile: <a href="{sender_linkedin}">{sender_linkedin}</a><br>
+{sender_phone}<br>
 101 Montgomery Street<br>
 San Francisco, CA 94104</p>"""
         

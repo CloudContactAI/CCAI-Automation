@@ -152,9 +152,10 @@ def show_usage():
     print()
     print("Features:")
     print('  • Scrapes LinkedIn profile and recent posts')
+    sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
     print('  • Uses AWS Bedrock AI for personalization')
     print('  • References recent LinkedIn activity in email')
-    print('  • Professional AllCode signature included')
+    print(f'  • Professional {sender_company} signature included')
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

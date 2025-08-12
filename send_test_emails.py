@@ -117,21 +117,28 @@ async def generate_ai_email_with_linkedin(contact, ai_generator, driver):
     except Exception as e:
         print(f"❌ AI generation failed: {e}")
         # Fallback to simple template
+        sender_name = os.getenv('SENDER_NAME', 'Andreas Garcia')
+        sender_title = os.getenv('SENDER_TITLE', 'Account Executive')
+        sender_linkedin = os.getenv('SENDER_LINKEDIN', 'https://www.linkedin.com/in/andreas-garcia-0a7963139')
+        sender_phone = os.getenv('SENDER_PHONE', '(415) 890-6431')
+        sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
+        sender_company_url = os.getenv('SENDER_COMPANY_URL', 'https://allcode.com')
+        
         first_name = contact['name'].split()[0] if contact['name'] else "Friend"
         subject = f"Quick question about {contact['company']}"
         content = f"""<p>Hi {first_name},</p>
 
 <p>I came across your profile and wanted to reach out about your work at {contact['company']}.</p>
 
-<p>At AllCode, we help companies optimize their cloud infrastructure. Would you have 15 minutes to discuss potential opportunities?</p>
+<p>At {sender_company}, we help companies optimize their cloud infrastructure. Would you have 15 minutes to discuss potential opportunities?</p>
 
 <p>Thanks,</p>
 
-<p>Andreas Garcia<br>
-Account Executive<br>
-AllCode: <a href="https://allcode.com/">https://allcode.com/</a><br>
-LinkedIn Profile: <a href="https://www.linkedin.com/in/andreas-garcia-0a7963139">www.linkedin.com/in/andreas-garcia-0a7963139</a><br>
-(415) 890-6431<br>
+<p>{sender_name}<br>
+{sender_title}<br>
+{sender_company}: <a href="{sender_company_url}">{sender_company_url}</a><br>
+LinkedIn Profile: <a href="{sender_linkedin}">{sender_linkedin}</a><br>
+{sender_phone}<br>
 101 Montgomery Street<br>
 San Francisco, CA 94104</p>"""
         
@@ -143,19 +150,14 @@ async def send_test_emails():
     # Test data based on LinkedIn profiles
     test_contacts = [
         {
-            "name": "Andreas Garcia",
-            "email": "andreas@allcode.com",
-            "company": "AllCode",
-            "title": "Software Developer",
-            "linkedin_url": "https://www.linkedin.com/in/andreas-garcia-0a7963139"
-        },
-        {
-            "name": "Joel Garcia",
-            "email": "joel@allcode.com", 
-            "company": "AllCode",
-            "title": "CEO & Founder",
-            "linkedin_url": "https://www.linkedin.com/in/joelgarcia/"
+            "name": "Nidhi Sanghvi",
+            "email": "nidhi@cloudzon.com",
+            "company": "CloudZon",
+            "title": "Digital Sales Marketing Manager",
+            "linkedin_url": "http://www.linkedin.com/in/nidhi-sanghvi-38343418b",
+            "website": "https://cloudzon.com"
         }
+
     ]
     
     print("🤖 Sending AI-customized test emails with LinkedIn scraping...")

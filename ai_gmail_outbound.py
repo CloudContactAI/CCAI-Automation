@@ -25,14 +25,61 @@ class AIEmailGenerator:
     
     def __init__(self):
         if HAS_BEDROCK:
-            self.bedrock = boto3.client(
-                'bedrock-runtime',
-                region_name=os.getenv('AWS_REGION', 'us-east-1')
-            )
+            # Support AWS profiles (including SSO profiles)
+            aws_profile = os.getenv('AWS_PROFILE')
+            aws_region = os.getenv('AWS_REGION', 'us-east-1')
+            
+            if aws_profile:
+                try:
+                    # Use specific profile (works with SSO profiles)
+                    session = boto3.Session(profile_name=aws_profile)
+                    self.bedrock = session.client('bedrock-runtime', region_name=aws_region)
+                    print(f"🔐 Using AWS profile: {aws_profile}")
+                except Exception as e:
+                    print(f"⚠️ AWS profile '{aws_profile}' not found or invalid: {e}")
+                    print("🔄 Falling back to environment variables or default credentials...")
+                    # Fall back to environment variables by creating session without profile
+                    try:
+                        # Create session with explicit credentials from environment
+                        aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+                        aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+                        
+                        if aws_access_key and aws_secret_key:
+                            session = boto3.Session(
+                                aws_access_key_id=aws_access_key,
+                                aws_secret_access_key=aws_secret_key,
+                                region_name=aws_region
+                            )
+                            self.bedrock = session.client('bedrock-runtime')
+                            print(f"🔐 Using AWS credentials from environment variables in region: {aws_region}")
+                        else:
+                            # Use default credentials (IAM role, default profile, etc.)
+                            self.bedrock = boto3.client('bedrock-runtime', region_name=aws_region)
+                            print(f"🔐 Using default AWS credentials in region: {aws_region}")
+                    except Exception as fallback_error:
+                        print(f"❌ Fallback also failed: {fallback_error}")
+                        raise
+            else:
+                # No profile specified, use environment variables or default credentials
+                aws_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+                aws_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+                
+                if aws_access_key and aws_secret_key:
+                    session = boto3.Session(
+                        aws_access_key_id=aws_access_key,
+                        aws_secret_access_key=aws_secret_key,
+                        region_name=aws_region
+                    )
+                    self.bedrock = session.client('bedrock-runtime')
+                    print(f"🔐 Using AWS credentials from environment variables in region: {aws_region}")
+                else:
+                    # Use default credentials (IAM role, default profile, etc.)
+                    self.bedrock = boto3.client('bedrock-runtime', region_name=aws_region)
+                    print(f"🔐 Using default AWS credentials in region: {aws_region}")
         
         self.goals = [
             "book a 15-minute discovery call to discuss AWS optimization opportunities",
-            "introduce AllCode's cloud infrastructure services",
+            f"introduce {os.getenv('SENDER_COMPANY', 'AllCode')}'s cloud infrastructure services",
             "offer a collaboration on cloud security solutions",
             "schedule a brief consultation about scaling their infrastructure"
         ]
@@ -87,6 +134,13 @@ class AIEmailGenerator:
         goal = goal or random.choice(self.goals)
         tone = tone or random.choice(self.tones)
         
+        sender_name = os.getenv('SENDER_NAME', 'Andreas Garcia')
+        sender_title = os.getenv('SENDER_TITLE', 'Account Executive')
+        sender_linkedin = os.getenv('SENDER_LINKEDIN', 'https://www.linkedin.com/in/andreas-garcia-0a7963139')
+        sender_phone = os.getenv('SENDER_PHONE', '(415) 890-6431')
+        sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
+        sender_company_url = os.getenv('SENDER_COMPANY_URL', 'https://allcode.com')
+        
         prompt = f"""Write a cold outreach email to {first_name}, based on the following LinkedIn profile info:
 
 {profile_info}
@@ -106,11 +160,11 @@ Subject: [real subject line - no HTML tags]
 
 Thanks,
 
-Andreas Garcia
-Account Executive
-AllCode: https://allcode.com/
-LinkedIn Profile: www.linkedin.com/in/andreas-garcia-0a7963139
-(415) 890-6431
+{sender_name}
+{sender_title}
+{sender_company}: {sender_company_url}
+LinkedIn Profile: {sender_linkedin}
+{sender_phone}
 101 Montgomery Street
 San Francisco, CA 94104"""
 
@@ -146,6 +200,13 @@ San Francisco, CA 94104"""
     
     def generate_fallback_email(self, profile_info, first_name):
         """Fallback email generation when AI is not available."""
+        
+        sender_name = os.getenv('SENDER_NAME', 'Andreas Garcia')
+        sender_title = os.getenv('SENDER_TITLE', 'Account Executive')
+        sender_linkedin = os.getenv('SENDER_LINKEDIN', 'https://www.linkedin.com/in/andreas-garcia-0a7963139')
+        sender_phone = os.getenv('SENDER_PHONE', '(415) 890-6431')
+        sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
+        sender_company_url = os.getenv('SENDER_COMPANY_URL', 'https://allcode.com')
         
         # Extract key details from profile info
         lines = profile_info.split('\n')
@@ -186,17 +247,17 @@ San Francisco, CA 94104"""
     
     <p>I noticed your role as {role} at {company} and thought you might be interested in how we're helping similar companies optimize their AWS infrastructure.</p>
     
-    <p>At AllCode, we've helped companies reduce cloud costs by 30-40% while improving performance and reliability. Our clients typically see immediate improvements in both cost efficiency and system performance.</p>
+    <p>At {sender_company}, we've helped companies reduce cloud costs by 30-40% while improving performance and reliability. Our clients typically see immediate improvements in both cost efficiency and system performance.</p>
     
     <p>Would you have 15 minutes for a quick call to discuss your current setup and explore potential optimizations?</p>
     
     <div class="signature">
         <p>Thanks,</p>
-        <p><strong>Andreas Garcia</strong><br>
-        Account Executive<br>
-        <strong>AllCode:</strong> <a href="https://allcode.com/">https://allcode.com/</a><br>
-        <strong>LinkedIn:</strong> <a href="https://www.linkedin.com/in/andreas-garcia-0a7963139">www.linkedin.com/in/andreas-garcia-0a7963139</a><br>
-        <a href="tel:+14158906431">(415) 890-6431</a><br>
+        <p><strong>{sender_name}</strong><br>
+        {sender_title}<br>
+        <strong>{sender_company}:</strong> <a href="{sender_company_url}">{sender_company_url}</a><br>
+        <strong>LinkedIn:</strong> <a href="{sender_linkedin}">{sender_linkedin}</a><br>
+        <a href="tel:{sender_phone.replace('(', '').replace(')', '').replace(' ', '').replace('-', '')}">{sender_phone}</a><br>
         101 Montgomery Street<br>
         San Francisco, CA 94104</p>
     </div>
@@ -208,9 +269,10 @@ San Francisco, CA 94104"""
 async def generate_ai_gmail_outbound(limit=10):
     """Generate AI-powered Gmail-style emails."""
     
-    csv_files = list(Path(".").glob("AllCode*.csv"))
+    sender_company = os.getenv('SENDER_COMPANY', 'AllCode')
+    csv_files = list(Path(".").glob(f"{sender_company}*.csv"))
     if not csv_files:
-        print("❌ No AllCode CSV file found")
+        print(f"❌ No {sender_company} CSV file found")
         return
     
     csv_file = csv_files[0]

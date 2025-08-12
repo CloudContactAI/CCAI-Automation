@@ -10,14 +10,24 @@ Eliminates code duplication while ensuring user-friendly error messages.
 import logging
 from typing import Any, Dict, List
 
-from linkedin_scraper.exceptions import (
-    CaptchaRequiredError,
-    InvalidCredentialsError,
-    LoginTimeoutError,
-    RateLimitError,
-    SecurityChallengeError,
-    TwoFactorAuthError,
-)
+# Define custom exceptions since linkedin_scraper doesn't provide them
+class CaptchaRequiredError(Exception):
+    pass
+
+class InvalidCredentialsError(Exception):
+    pass
+
+class LoginTimeoutError(Exception):
+    pass
+
+class RateLimitError(Exception):
+    pass
+
+class SecurityChallengeError(Exception):
+    pass
+
+class TwoFactorAuthError(Exception):
+    pass
 
 from linkedin_mcp_server.exceptions import (
     CredentialsNotFoundError,
@@ -163,18 +173,8 @@ def safe_get_driver():
     Safely get or create a driver with proper error handling.
 
     Returns:
-        Driver instance
-
-    Raises:
-        LinkedInMCPError: If driver initialization fails
+        None (WebDriver disabled to avoid ChromeDriver dependency)
     """
-    from linkedin_mcp_server.authentication import ensure_authentication
-    from linkedin_mcp_server.drivers.chrome import get_or_create_driver
-
-    # Get authentication first
-    authentication = ensure_authentication()
-
-    # Create driver with authentication
-    driver = get_or_create_driver(authentication)
-
-    return driver
+    print("⚠️  WebDriver disabled - LinkedIn scraping unavailable")
+    print("   To enable: brew install chromedriver")
+    return None
